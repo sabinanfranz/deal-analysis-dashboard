@@ -63,14 +63,12 @@ def _post(df: pd.DataFrame) -> pd.DataFrame:
         df['수주 예정액(종합)'].astype(str).str.replace(',', ''), errors='coerce'
     ).fillna(0)
 
+    # 숫자 컬럼들 변환 (dropna 제거)
     num = ['생성년도','생성월','수주예정년도','수주예정월']
-    df = df.dropna(subset=num)
-    df[num] = df[num].astype(int)
-
-    df['예정월'] = (
-        df['수주예정년도'].astype(str) + '-' +
-        df['수주예정월'].astype(str).str.zfill(2)
-    )
+    for col in num:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
     return df
 
 # ─────────────────────────── 로더 (sig 자동 전달)
