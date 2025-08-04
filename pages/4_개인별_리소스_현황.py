@@ -2,6 +2,7 @@
 기업교육 1·2팀 담당자별 성사 가능성 대시보드 (2025년)
 - 월별 탭 제거, 연간 요약 테이블 컬럼 구조 변경
 - 리소스 현황·중견중소 현황 컬럼 추가
+- '확정' 카운트 로직 정정: 성사 가능성이 '확정'인 모든 건 무조건 포함
 """
 
 import streamlit as st
@@ -43,10 +44,15 @@ TODAY = pd.Timestamp(datetime.now(ZoneInfo('Asia/Seoul')).date())
 
 # ────────── 데이터 로드 ──────────
 df = load_all_deal()
-# 이름 정리 및 팀 식별
 df['담당자_name'] = df['담당자_name'].str.replace(r'B$','',regex=True)
 df['팀'] = df['담당자_name'].map(NAME2TEAM)
-df = df[df['팀'].isin(TEAMS) & (df['생성년도']==2025) & df['생성월'].between(1,12)].copy()
+df = df[
+    df['팀'].isin(TEAMS) &
+    (
+        ((df['생성년도'] == 2024) & (df['생성월'] >= 10)) |
+        ((df['생성년도'] == 2025) & (df['생성월'] <= 12))
+    )
+].copy()
 
 # ────────── 성사 가능성 정규화 ──────────
 
@@ -87,18 +93,20 @@ def ordered_persons(team_df, team_name):
 # ────────── 요약 테이블 ──────────
 
 def summary_table(team_df, persons):
-    # 기본 상태별 피벗 테이블
+    # 상태별 집계
     stat_pivot = team_df.groupby(['담당자_name','세부상태']).size().unstack(fill_value=0)
-    # 확정 건수(세부상태 제외)
+    # 기존 '확정' 컬럼 제거 후 재계산
+    if '확정' in stat_pivot.columns:
+        stat_pivot = stat_pivot.drop(columns=['확정'])
     conf_cnt = team_df[team_df['성사 가능성']=='확정'].groupby('담당자_name').size()
     stat_pivot['확정'] = conf_cnt
-    # 누락된 컬럼 보강
+    # 누락된 상태 보강
     for col in BASE_STATUS:
         if col not in stat_pivot.columns:
             stat_pivot[col] = 0
-    # 리소스 현황: 운영 중·높음·낮음·미기재 합
+    # 리소스 현황
     stat_pivot['리소스 현황'] = stat_pivot[['확정(운영 중)','높음','낮음','미기재']].sum(axis=1)
-    # 중견중소 현황: ONLINE 아닐 때 + 기업 규모 중견/중소 & 상태 높음/낮음/미기재
+    # 중견·중소 현황
     mask = (
         ~team_df['과정포맷(대)'].isin(ONLINE_FMT) &
         team_df['기업 규모'].isin(['중견기업','중소기업']) &
@@ -106,13 +114,12 @@ def summary_table(team_df, persons):
     )
     mid_cnt = team_df[mask].groupby('담당자_name').size()
     stat_pivot['중견중소 현황'] = mid_cnt
-    # 정렬 및 결측 처리
+    # 정렬 및 형 변환
     stat_pivot = stat_pivot.reindex(persons).fillna(0).astype(int)
     stat_pivot.reset_index(inplace=True)
     stat_pivot['name_rank'] = stat_pivot['담당자_name'].map(NAME_ORDER)
     stat_pivot.sort_values('name_rank', inplace=True)
     stat_pivot.drop(columns=['name_rank'], inplace=True)
-    # 컬럼 순서
     COL_ORDER = ['담당자_name','리소스 현황','중견중소 현황'] + BASE_STATUS
     return stat_pivot[COL_ORDER]
 
@@ -166,7 +173,7 @@ for tab,(title,team) in zip(ui_tabs,TABS):
         tbl = summary_table(team_df, persons)
         st.dataframe(tbl,use_container_width=True,hide_index=True)
         st.markdown('---')
-        for stt in ['확정'] + SUB_CONF + ['높음','낮음','미기재','LOST']:
+        for stt in BASE_STATUS:
             sub = detail_df(team_df, stt)
             st.markdown(f"#### {stt} 상세")
             st.dataframe(sub,use_container_width=True,hide_index=True)
