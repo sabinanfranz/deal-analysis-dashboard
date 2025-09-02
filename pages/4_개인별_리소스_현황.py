@@ -11,6 +11,10 @@
   · 상세 표의 '수주 예정액(종합)'은 억 단위(1e8)로 표시.
     - 다음 중 하나라도 해당되면 '미기재'로 표시:
       (a) '금액' NULL, (b) '예상 체결액' NULL, (c) 수주 예정액(종합) 비었거나 수치화 불가/≤0
+- [추가]
+  · 1팀/2팀 탭의 담당자 필터 아래에 **운영 리소스 산정 딜** 표 추가(담당자 필터 적용)
+    (컬럼: 생성년도, 생성월, 기업명, 기업 규모, 담당자_name, 이름, 상태, 성사 가능성, 수주 예정액(종합),
+           일별 가중치, 수강시작일, 수강종료일, 과정포맷(대), 카테고리(대))
 """
 
 import re
@@ -174,13 +178,17 @@ def _weekly_with_order(daily_df: pd.DataFrame, full_columns: list[str]):
 @st.cache_data(show_spinner=False)
 def _prepare_resource_rows():
     """
-    반환: columns ['팀','담당자_name','시작','종료','s_idx','e_idx','weight']
-    - won: 금액(우선) or 수주예정액(종합)
+    반환: 운영 리소스 산정용 row (중복 제거·필터 적용 후)
+      필수 컬럼: ['팀','담당자_name','시작','종료','s_idx','e_idx','weight']
+      + 표시용 컬럼:
+        ['생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성','수주 예정액(종합)',
+         '수강시작일','수강종료일','과정포맷(대)','카테고리(대)','source']
+    - won: 금액(우선) or 수주예정액(종합)으로 weight 산정 (금액 미기재면 최소 가중치 1)
     - all(확정): 수강시작/종료 유효 & 수주예정액>0
     - ONLINE 제외, 2025 클리핑
     - won 기준으로 all 중복 제거(코스ID→합성키)
     """
-    # WON
+    # ── WON
     won = load_won_deal().copy()
     won['담당자_name'] = _norm_person(won['담당자_name'])
     won['팀'] = won['담당자_name'].map(NAME2TEAM)
@@ -213,9 +221,20 @@ def _prepare_resource_rows():
 
     won['s_idx'] = won['시작'].dt.normalize().map(POS).astype('Int64')
     won['e_idx'] = won['종료'].dt.normalize().map(POS).astype('Int64')
-    won_keep = won[['팀','담당자_name','시작','종료','s_idx','e_idx','weight','코스ID_key','FB_key']].copy()
 
-    # ALL (확정 + 유효기간 + 수주예정액>0)
+    # won 표시용 컬럼 채우기(수강시작/종료는 클리핑된 값을 그대로 사용)
+    won_keep = won.assign(
+        source='WON',
+        수강시작일=won['시작'],
+        수강종료일=won['종료']
+    )[[
+        '팀','담당자_name','시작','종료','s_idx','e_idx','weight','코스ID_key','FB_key',
+        # 표시용
+        '생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성','수주 예정액(종합)',
+        '수강시작일','수강종료일','과정포맷(대)','카테고리(대)','source','금액_원'
+    ]].copy()
+
+    # ── ALL (확정 + 유효기간 + 수주예정액>0)
     alld = load_all_deal().copy()
     alld['담당자_name'] = _norm_person(alld['담당자_name'])
     alld['팀'] = alld['담당자_name'].map(NAME2TEAM)
@@ -252,14 +271,31 @@ def _prepare_resource_rows():
         (alld['FB_key'].notna() & alld['FB_key'].isin(won_fb_set))
     )].copy()
 
-    # 인덱스 매핑
+    # 인덱스 매핑 + 표시용 컬럼 준비
     alld_dedup['s_idx'] = alld_dedup['시작'].dt.normalize().map(POS).astype('Int64')
     alld_dedup['e_idx'] = alld_dedup['종료'].dt.normalize().map(POS).astype('Int64')
 
-    alld_keep = alld_dedup[['팀','담당자_name','시작','종료','s_idx','e_idx','weight']].copy()
-    won_keep2 = won_keep[['팀','담당자_name','시작','종료','s_idx','e_idx','weight']].copy()
+    alld_keep = alld_dedup.assign(
+        source='ALL',
+        수강시작일=alld_dedup['시작'],
+        수강종료일=alld_dedup['종료']
+    )[[
+        '팀','담당자_name','시작','종료','s_idx','e_idx','weight','코스ID_key','FB_key',
+        # 표시용
+        '생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성','수주 예정액(종합)',
+        '수강시작일','수강종료일','과정포맷(대)','카테고리(대)','source','금액_원'
+    ]].copy()
 
-    return pd.concat([won_keep2, alld_keep], ignore_index=True)
+    # 합치기
+    final_df = pd.concat([won_keep, alld_keep], ignore_index=True)
+
+    # 표시 안정성: 일부 표시 컬럼이 원본에 없을 수 있으므로 결측 대비
+    for c in ['생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성',
+              '수주 예정액(종합)','수강시작일','수강종료일','과정포맷(대)','카테고리(대)']:
+        if c not in final_df.columns:
+            final_df[c] = pd.NA
+
+    return final_df
 
 # ─────────────────────────── [성사가능성] 상수/유틸
 SHOW_STATUS = ['높음','낮음','미기재','LOST']
@@ -362,7 +398,6 @@ def detail_df(team_like_df: pd.DataFrame, persons: list[str] | None, status: str
         # ② '금액' & '예상 체결액' 둘 다 NULL인지(AND) 확인
         def _nullish(colname):
             if colname not in res.columns:
-                # 컬럼이 없으면 NULL 판정에 포함하지 않음
                 return pd.Series(False, index=res.index)
             c = res[colname]
             s = c.astype(str).str.strip().str.lower()
@@ -370,7 +405,7 @@ def detail_df(team_like_df: pd.DataFrame, persons: list[str] | None, status: str
 
         null_amount   = _nullish('금액')
         null_expected = _nullish('예상 체결액')
-        null_both = null_amount & null_expected   # ★ AND 조건으로 변경
+        null_both = null_amount & null_expected
 
         # ③ 최종 '미기재' 마스크
         missing_or_zero = is_blank | num.isna() | (num <= 0) | null_both
@@ -381,17 +416,71 @@ def detail_df(team_like_df: pd.DataFrame, persons: list[str] | None, status: str
 
     return res
 
+# ───── 운영 리소스 산정 딜 표(담당자 필터 반영) 생성 헬퍼
+RESOURCE_DISPLAY_COLS = [
+    '생성년도','생성월','기업명','기업 규모','담당자_name','이름','상태','성사 가능성',
+    '수주 예정액(종합)','일별 가중치','수강시작일','수강종료일','과정포맷(대)','카테고리(대)'
+]
+
+def make_resource_selection_table(res_rows: pd.DataFrame, team: str, persons_sel: list[str]) -> pd.DataFrame:
+    sub = res_rows[res_rows['팀'] == team].copy()
+    if persons_sel and persons_sel != team_all_persons(team):
+        sub = sub[sub['담당자_name'].isin(persons_sel)]
+
+    if sub.empty:
+        return pd.DataFrame(columns=RESOURCE_DISPLAY_COLS)
+
+    # 표시용 가공
+    view = sub.copy()
+    # 억 단위 포맷(두 자리), 숫자 없거나 ≤0이면 '미기재'
+    if '수주 예정액(종합)' in view.columns:
+        num = _to_number(view['수주 예정액(종합)'])
+        view['수주 예정액(종합)'] = np.where(num.notna() & (num > 0),
+                                          (num/1e8).round(2).map(lambda v: f"{v:.2f}"),
+                                          '미기재')
+    # 일별 가중치 = weight
+    view['일별 가중치'] = view['weight'].round(0).astype('Int64')
+
+    # 수강 시작/종료일(클리핑된 값) 날짜 표기
+    view['수강시작일'] = pd.to_datetime(view['수강시작일'], errors='coerce').dt.date
+    view['수강종료일'] = pd.to_datetime(view['수강종료일'], errors='coerce').dt.date
+
+    # 필요한 컬럼만, 빈 컬럼 보강
+    for c in RESOURCE_DISPLAY_COLS:
+        if c not in view.columns:
+            view[c] = pd.NA
+
+    view = view[RESOURCE_DISPLAY_COLS].sort_values(
+        ['담당자_name','수강시작일','기업명'], na_position='last'
+    )
+
+    return view
+
 # ─────────────────────────── 데이터 준비
 st.title("사업부 운영 리소스 & 성사 가능성 — 2025")
 
 with st.expander("정책 요약 / 계산 기준", expanded=False):
     st.markdown("""
-- **리소스:** won 딜 **+** all 딜(성사 가능성=확정, `수강시작일`·`수강종료일` 유효, `수주 예정액(종합)>0`)
-  · won과 all 중복 제거(`코스 ID` → 합성키) · ONLINE 제외(`선택구매(온라인)`,`구독제(온라인)`,`포팅`)  
-  · 2025 경계로 클리핑 · 금액 구간 가중치(1/2/3/5/7/10)를 **매일** 누적  
-- **주간 표:** 한국 기준 **금주(월~일)** 중심 **-4주 ~ +4주**  
-- **성사가능성(간소화):** 상태 = {**높음, 낮음, 미기재, LOST**}, **리소스 현황 = 높음+낮음+미기재**, **중견중소 현황 유지**  
-- **표 정렬:** 1팀/2팀의 **주간 리소스 합계 표의 열 순서**를 같은 탭의 **요약 표 열 순서**와 **동일**하게 적용
+- **리소스 포함 기준**
+  - **WON**: 팀 소속(기업교육 1·2팀), ONLINE 제외, `수강시작일~수강종료일` **유효**(2025 경계로 클리핑)  
+    금액 열(우선순위 **금액 → 수주 예정액(종합) → 계약금액 → 수주금액 → 총금액**)로 가중치 산정  
+    *(금액 미기재/0이어도 최소 가중치 1로 반영)*  
+  - **ALL**: 팀 소속, ONLINE 제외, `성사 가능성=확정`, `수강시작/종료` **유효**, **`수주 예정액(종합) > 0`**  
+  - **중복 제거**: WON에 있는 건은 ALL에서 제외 (우선순위 **코스 ID** 일치 → 없으면 **기업명|담당자|시작|종료** 합성키)
+- **일일 누적**: 각 딜의 **일별 가중치**를 `수강시작일~수강종료일` 동안 **매일** 더함
+- **금액 구간별 가중치(원화 기준)**
+
+| 금액(원) 구간                    | 일별 가중치 |
+|:---------------------------------|:-----------:|
+| ≤ 5,000,000                      | 1 |
+| 5,000,001 ~ 25,000,000           | 2 |
+| 25,000,001 ~ 50,000,000          | 3 |
+| 50,000,001 ~ 100,000,000         | 5 |
+| 100,000,001 ~ 300,000,000        | 7 |
+| > 300,000,000                    | 10 |
+
+- **주간 표**: 한국 기준 **금주(월~일)** 중심 **-4주 ~ +4주**  
+- **성사가능성(간소화)**: 상태 = {**높음, 낮음, 미기재, LOST**}, **리소스 현황 = 높음+낮음+미기재**, **중견중소 현황 유지**
 """)
 
 # [리소스] 준비
@@ -486,6 +575,12 @@ with tab_t1:
     sel1 = st.selectbox('담당자 필터', ['전체'] + persons_all_1, 0, key='t1_filter')
     persons_sel_1 = persons_all_1 if sel1 == '전체' else [sel1]
 
+    # ★ 운영 리소스 산정 딜 (담당자 필터 적용)
+    st.markdown("### 운영 리소스 산정 딜 (담당자 필터 적용)")
+    res_tbl_1 = make_resource_selection_table(res_rows, '기업교육 1팀', persons_sel_1)
+    st.dataframe(res_tbl_1, use_container_width=True, hide_index=True)
+
+    # 상태 상세 표들
     for stt in SHOW_STATUS:
         st.markdown(f"#### {stt} 상세")
         sub1 = detail_df(s_team1, persons=persons_sel_1, status=stt)
@@ -522,6 +617,12 @@ with tab_t2:
     sel2 = st.selectbox('담당자 필터', ['전체'] + persons_all_2, 0, key='t2_filter')
     persons_sel_2 = persons_all_2 if sel2 == '전체' else [sel2]
 
+    # ★ 운영 리소스 산정 딜 (담당자 필터 적용)
+    st.markdown("### 운영 리소스 산정 딜 (담당자 필터 적용)")
+    res_tbl_2 = make_resource_selection_table(res_rows, '기업교육 2팀', persons_sel_2)
+    st.dataframe(res_tbl_2, use_container_width=True, hide_index=True)
+
+    # 상태 상세 표들
     for stt in SHOW_STATUS:
         st.markdown(f"#### {stt} 상세")
         sub2 = detail_df(s_team2, persons=persons_sel_2, status=stt)
