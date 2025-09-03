@@ -11,10 +11,7 @@
   · 상세 표의 '수주 예정액(종합)'은 억 단위(1e8)로 표시.
     - 다음 중 하나라도 해당되면 '미기재'로 표시:
       (a) '금액' NULL, (b) '예상 체결액' NULL, (c) 수주 예정액(종합) 비었거나 수치화 불가/≤0
-- [추가]
-  · 1팀/2팀 탭의 담당자 필터 아래에 **운영 리소스 산정 딜** 표 추가(담당자 필터 적용)
-    (컬럼: 생성년도, 생성월, 기업명, 기업 규모, 담당자_name, 이름, 상태, 성사 가능성, 수주 예정액(종합),
-           일별 가중치, 수강시작일, 수강종료일, 과정포맷(대), 카테고리(대))
+  · (신규) 1팀/2팀 요약 표(담당자)는 맨 위에 **'예상 체결액'(억원)** 행 추가
 """
 
 import re
@@ -182,7 +179,7 @@ def _prepare_resource_rows():
       필수 컬럼: ['팀','담당자_name','시작','종료','s_idx','e_idx','weight']
       + 표시용 컬럼:
         ['생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성','수주 예정액(종합)',
-         '수강시작일','수강종료일','과정포맷(대)','카테고리(대)','source']
+         '수강시작일','수강종료일','과정포맷(대)','카테고리(대)','source','금액_원']
     - won: 금액(우선) or 수주예정액(종합)으로 weight 산정 (금액 미기재면 최소 가중치 1)
     - all(확정): 수강시작/종료 유효 & 수주예정액>0
     - ONLINE 제외, 2025 클리핑
@@ -289,7 +286,7 @@ def _prepare_resource_rows():
     # 합치기
     final_df = pd.concat([won_keep, alld_keep], ignore_index=True)
 
-    # 표시 안정성: 일부 표시 컬럼이 원본에 없을 수 있으므로 결측 대비
+    # 표시 안정성: 일부 표시 컬럼이 없을 때 대비
     for c in ['생성년도','생성월','기업명','기업 규모','이름','상태','성사 가능성',
               '수주 예정액(종합)','수강시작일','수강종료일','과정포맷(대)','카테고리(대)']:
         if c not in final_df.columns:
@@ -344,27 +341,50 @@ def summary_matrix_team(dept_df: pd.DataFrame) -> pd.DataFrame:
 
 def summary_matrix_people(team_df: pd.DataFrame, team_name: str, col_order: list[str] | None) -> pd.DataFrame:
     """
-    행=카운트 항목, 열=담당자(팀원 전체).
+    행=카운트 항목 + 예상 체결액(억원), 열=담당자(팀원 전체).
     - col_order가 주어지면 그 순서로 열을 정렬(주간 표의 열 순서와 동기화).
+    - '예상 체결액'은 리소스 현황을 카운트하는 딜(상태 ∈ {높음,낮음,미기재})의 '수주 예정액(종합)' 합계를 **억원**으로 표기(소수 둘째 자리).
     """
     persons = team_all_persons(team_name)
     base = team_df[team_df['성사 가능성'].isin(SHOW_STATUS)].copy()
+
+    # 상태 카운트 피벗
     stat = base.groupby(['담당자_name','성사 가능성']).size().unstack(fill_value=0)
     for stt in SHOW_STATUS:
         if stt not in stat.columns: stat[stt] = 0
+
+    # 리소스 현황(카운트)
     stat['리소스 현황'] = stat[RES_STATUS].sum(axis=1)
-    mask = (~team_df['과정포맷(대)'].isin(ONLINE_SET) &
-            team_df['기업 규모'].isin(['중견기업','중소기업']) &
-            team_df['성사 가능성'].isin(RES_STATUS))
-    mid_cnt = team_df[mask].groupby('담당자_name').size()
+
+    # 중견중소 현황(오프라인 & 상태∈RES_STATUS & 규모∈중견/중소)
+    mask_mid = (~team_df['과정포맷(대)'].isin(ONLINE_SET) &
+                team_df['기업 규모'].isin(['중견기업','중소기업']) &
+                team_df['성사 가능성'].isin(RES_STATUS))
+    mid_cnt = team_df[mask_mid].groupby('담당자_name').size()
     stat['중견중소 현황'] = mid_cnt
 
-    # 열 강제 포함(팀원 전체) + 순서
+    # 열 강제 포함(팀원 전체) + 순서 동기화
     base_cols = col_order if col_order else persons
     full_order = [c for c in base_cols if c in persons] + [c for c in persons if c not in base_cols]
     stat = stat.reindex(full_order).fillna(0).astype(int)
-    mat = stat[['리소스 현황','중견중소 현황'] + SHOW_STATUS].T
-    return mat.astype('Int64')
+
+    # ── (신규) 예상 체결액(억원) 행 계산: 상태 ∈ RES_STATUS 의 '수주 예정액(종합)' 합
+    if '수주 예정액(종합)' in team_df.columns:
+        amt_num = _to_number(team_df['수주 예정액(종합)']).fillna(0.0)
+        amt_df = team_df.assign(__amt=amt_num)
+        amt_ser = (amt_df[amt_df['성사 가능성'].isin(RES_STATUS)]
+                   .groupby('담당자_name')['__amt'].sum())
+        amt_ser = amt_ser.reindex(full_order).fillna(0.0)
+        amt_row = (amt_ser / 1e8).round(2).map(lambda v: f"{v:.2f}")  # 억 단위 문자열
+    else:
+        amt_row = pd.Series(['0.00'] * len(full_order), index=full_order)
+
+    # 출력 매트릭스 구성: 첫 행 '예상 체결액' + 기존 카운트 행들
+    mat_counts = stat[['리소스 현황','중견중소 현황'] + SHOW_STATUS].T
+    mat_amount = pd.DataFrame([amt_row.values], index=['예상 체결액'], columns=full_order)
+    mat = pd.concat([mat_amount, mat_counts], axis=0)
+
+    return mat  # (혼합형: 예상 체결액=문자열, 나머지=정수)
 
 def detail_df(team_like_df: pd.DataFrame, persons: list[str] | None, status: str) -> pd.DataFrame:
     """상세 표(상태별). persons=None이면 전 팀 합산, 리스트면 해당 담당자만.
@@ -466,7 +486,7 @@ with st.expander("정책 요약 / 계산 기준", expanded=False):
     금액 열(우선순위 **금액 → 수주 예정액(종합) → 계약금액 → 수주금액 → 총금액**)로 가중치 산정  
     *(금액 미기재/0이어도 최소 가중치 1로 반영)*  
   - **ALL**: 팀 소속, ONLINE 제외, `성사 가능성=확정`, `수강시작/종료` **유효**, **`수주 예정액(종합) > 0`**  
-  - **중복 제거**: WON에 있는 건은 ALL에서 제외 (우선순위 **코스 ID** 일치 → 없으면 **기업명|담당자|시작|종료** 합성키)
+  - **중복 제거**: WON에 있는 건은 ALL에서 제외 (우선순위 **코스 ID** → 없으면 **기업명|담당자|시작|종료** 합성키)
 - **일일 누적**: 각 딜의 **일별 가중치**를 `수강시작일~수강종료일` 동안 **매일** 더함
 - **금액 구간별 가중치(원화 기준)**
 
@@ -479,6 +499,7 @@ with st.expander("정책 요약 / 계산 기준", expanded=False):
 | 100,000,001 ~ 300,000,000        | 7 |
 | > 300,000,000                    | 10 |
 
+- **요약 표(담당자)**: 맨 위 **'예상 체결액'(억원)** 은 **리소스 현황(상태 ∈ {높음,낮음,미기재})에 포함되는 딜의 `수주 예정액(종합)` 합계**를 **억원(소수 둘째)**로 표시  
 - **주간 표**: 한국 기준 **금주(월~일)** 중심 **-4주 ~ +4주**  
 - **성사가능성(간소화)**: 상태 = {**높음, 낮음, 미기재, LOST**}, **리소스 현황 = 높음+낮음+미기재**, **중견중소 현황 유지**
 """)
@@ -575,7 +596,7 @@ with tab_t1:
     sel1 = st.selectbox('담당자 필터', ['전체'] + persons_all_1, 0, key='t1_filter')
     persons_sel_1 = persons_all_1 if sel1 == '전체' else [sel1]
 
-    # ★ 운영 리소스 산정 딜 (담당자 필터 적용)
+    # 운영 리소스 산정 딜 (담당자 필터 적용)
     st.markdown("### 운영 리소스 산정 딜 (담당자 필터 적용)")
     res_tbl_1 = make_resource_selection_table(res_rows, '기업교육 1팀', persons_sel_1)
     st.dataframe(res_tbl_1, use_container_width=True, hide_index=True)
@@ -617,7 +638,7 @@ with tab_t2:
     sel2 = st.selectbox('담당자 필터', ['전체'] + persons_all_2, 0, key='t2_filter')
     persons_sel_2 = persons_all_2 if sel2 == '전체' else [sel2]
 
-    # ★ 운영 리소스 산정 딜 (담당자 필터 적용)
+    # 운영 리소스 산정 딜 (담당자 필터 적용)
     st.markdown("### 운영 리소스 산정 딜 (담당자 필터 적용)")
     res_tbl_2 = make_resource_selection_table(res_rows, '기업교육 2팀', persons_sel_2)
     st.dataframe(res_tbl_2, use_container_width=True, hide_index=True)
