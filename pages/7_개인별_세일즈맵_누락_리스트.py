@@ -219,6 +219,16 @@ sel_person = st.sidebar.selectbox("개인(담당자)", ["전체"] + person_pool,
 # 선택 반영
 df_f = df_team if sel_person == "전체" else df_team[df_team["담당자_name"] == sel_person].copy()
 
+# ────────── 개인 체크리스트 전용 예외 제거 ──────────
+# 특정 담당자/딜을 개인 체크리스트에서만 제외 (조직 요약 매트릭스에는 영향 없음)
+EXCLUDE_BY_OWNER = {
+    "김민선": {"신세계백화점_직급별 생성형 AI", "우리은행_WLT II DT 평가과정"},
+}
+if sel_person != "전체":
+    names_to_exclude = EXCLUDE_BY_OWNER.get(sel_person, set())
+    if names_to_exclude:
+        df_f = df_f[~df_f["이름"].astype(str).str.strip().isin(names_to_exclude)].copy()
+
 # 공통 표시용 DF
 def to_display(df0: pd.DataFrame) -> pd.DataFrame:
     disp = df0.copy()
