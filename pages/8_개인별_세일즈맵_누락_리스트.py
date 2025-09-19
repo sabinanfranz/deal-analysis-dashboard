@@ -42,19 +42,20 @@ DISPLAY_COLS = [
 
 # 규칙 라벨
 RULE_LABELS = {
-    "R1":  "Won & (계약체결일 없음)",                    # 둘 다 없음 포함
-    "R2":  "Won & 금액 없음(금액=0 허용)",               # 금액 NaN이면 카운트
+    "R1":  "Won & (계약체결일 없음)",
+    "R2":  "Won & 금액 없음(금액=0 허용)",
     "R3":  "Won & 수강시작/종료 누락",
     "R4":  "Won & 코스 ID 누락",
     "R5":  "Won & 성사≠확정",
     "R6":  "Lost & 성사≠LOST",
-    "R7":  "계약체결일 > 수강시작일 (동년월은 제외)",
+    "R7":  "계약체결일 > 수강시작일 (동년월 제외, 온라인 구독/선택구매 제외)",  # ⬅️ 문구 보강
     "R8":  "생성 1주↑ & 카테고리 누락",
     "R9":  "생성 1주↑ & 과정포맷 누락",
     "R10": "성사=높음 & 수주예정일 없음",
     "R11": "상태=Convert",
-    "R12": "성사=높음/확정 & (금액·예상 체결액 모두 없음)",  # ★ 신규
+    "R12": "성사=높음/확정 & (금액·예상 체결액 모두 없음)",
 }
+
 RULE_CODES = list(RULE_LABELS.keys())
 
 # ────────── 유틸 ──────────
@@ -175,12 +176,19 @@ later_than_start = _contract > _start
 same_year_month  = _contract.dt.year.eq(_start.dt.year) & _contract.dt.month.eq(_start.dt.month)
 R7_base = mask_both & later_than_start & (~same_year_month)
 
-# ★ R7 예외: 담당자='강진우' AND 기업명 ∈ {'홈앤서비스','엔씨소프트','엘지전자'} → 노카운트
+# ★ R7 예외 1: 담당자='강진우' & 기업명 ∈ {'홈앤서비스','엔씨소프트','엘지전자'}
 exc_companies = {'홈앤서비스','엔씨소프트','엘지전자'}
-exc_mask = (df["담당자_name"].astype(str).str.strip().eq("강진우")) & (
+exc_mask_person = (df["담당자_name"].astype(str).str.strip().eq("강진우")) & (
     df["기업명"].astype(str).str.strip().isin(exc_companies)
 )
-R["R7"] = R7_base & (~exc_mask)
+
+# ★ NEW — R7 예외 2: 과정포맷이 '구독제(온라인)' 또는 '선택구매(온라인)'
+fmt = df["과정포맷"].astype(str).str.strip()
+exc_mask_format = fmt.isin({"구독제(온라인)","선택구매(온라인)"})
+
+# 최종 R7 (두 예외 모두 제외)
+R["R7"] = R7_base & (~exc_mask_person) & (~exc_mask_format)
+
 
 R["R8"]  = (TODAY - df["생성_날짜_std"] >= pd.Timedelta(days=7)) & missing_str_or_na(df["카테고리"])
 R["R9"]  = (TODAY - df["생성_날짜_std"] >= pd.Timedelta(days=7)) & missing_str_or_na(df["과정포맷"])
