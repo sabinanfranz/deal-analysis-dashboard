@@ -6,7 +6,8 @@
 #                 '코스 ID','카테고리','과정포맷']
 # R2: 금액은 0 허용(결측=NaN만), 예상 체결액 단독 결측은 미카운트
 # R7: 계약 체결일 > 수강시작일 AND (연·월이 다른 경우만 카운트)  ※ 동년·동월이면 노카운트
-#     └ 추가 예외: 담당자='강진우' 이고 기업명 ∈ {'홈앤서비스','엔씨소프트','엘지전자'}면 R7 노카운트
+#     └ 예외 1) 담당자='강진우' & 기업명 ∈ {'홈앤서비스','엔씨소프트','엘지전자'}
+#     └ 예외 2) 과정포맷 ∈ {'구독제(온라인)', '선택구매(온라인)'}
 # R12: 성사=높음/확정 & (금액·예상 체결액 모두 없음)  ← AND 조건
 # '이름'에 '비매출입과' 포함된 딜은 전부 제외
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ st.set_page_config(page_title="데이터 품질 점검 (2024-10 이후)", layout
 
 # ────────── 상수/매핑 ──────────
 TODAY = pd.Timestamp(datetime.now(ZoneInfo("Asia/Seoul")).date())
+ONLINE_EXEMPT_FORMATS = {"구독제(온라인)", "선택구매(온라인)"}  # R7 예외: 온라인 구독/선택구매
 
 TEAM_RAW = {
     '기업교육 1팀': ['김별','김솔이','황초롱','김정은','김동찬','정태윤','서정연','강지선','정하영','하승민','이은서','홍제환'],
@@ -48,14 +50,13 @@ RULE_LABELS = {
     "R4":  "Won & 코스 ID 누락",
     "R5":  "Won & 성사≠확정",
     "R6":  "Lost & 성사≠LOST",
-    "R7":  "계약체결일 > 수강시작일 (동년월 제외, 온라인 구독/선택구매 제외)",  # ⬅️ 문구 보강
+    "R7":  "계약체결일 > 수강시작일 (동년월 제외, 온라인 구독/선택구매 제외)",
     "R8":  "생성 1주↑ & 카테고리 누락",
     "R9":  "생성 1주↑ & 과정포맷 누락",
     "R10": "성사=높음 & 수주예정일 없음",
     "R11": "상태=Convert",
     "R12": "성사=높음/확정 & (금액·예상 체결액 모두 없음)",
 }
-
 RULE_CODES = list(RULE_LABELS.keys())
 
 # ────────── 유틸 ──────────
@@ -153,12 +154,14 @@ df["성사_norm"] = df["성사 가능성"].map(norm_prob)
 
 # ────────── 규칙 플래그 계산 ──────────
 R = {}
+
 # R1: Won & (계약체결일 없음) → 둘 다 없음 포함
 R["R1"] = (df["상태_norm"] == "won") & (pd.to_datetime(df["계약 체결일"], errors="coerce").isna())
 
 # R2: Won & 금액 없음(금액 NaN) → 금액이 NaN일 때만(0은 허용)
 R["R2"] = (df["상태_norm"] == "won") & (df["금액"].isna())
 
+# R3: Won & 수강시작/종료 누락
 R["R3"] = (df["상태_norm"] == "won") & (
     pd.to_datetime(df["수강시작일"], errors="coerce").isna() |
     pd.to_datetime(df["수강종료일"], errors="coerce").isna()
@@ -168,7 +171,7 @@ R["R4"] = (df["상태_norm"] == "won") & missing_str_or_na(df["코스 ID"])
 R["R5"] = (df["상태_norm"] == "won") & (df["성사_norm"] != "확정")
 R["R6"] = (df["상태_norm"] == "lost") & (df["성사_norm"] != "LOST")
 
-# R7: 계약체결일 > 수강시작일 AND (연·월이 다른 경우만 카운트)
+# ── R7: 계약체결일 > 수강시작일 & (동년·동월이면 제외) + 예외 반영
 _contract = pd.to_datetime(df["계약 체결일"], errors="coerce")
 _start    = pd.to_datetime(df["수강시작일"], errors="coerce")
 mask_both = _contract.notna() & _start.notna()
@@ -176,39 +179,58 @@ later_than_start = _contract > _start
 same_year_month  = _contract.dt.year.eq(_start.dt.year) & _contract.dt.month.eq(_start.dt.month)
 R7_base = mask_both & later_than_start & (~same_year_month)
 
-# ★ R7 예외 1: 담당자='강진우' & 기업명 ∈ {'홈앤서비스','엔씨소프트','엘지전자'}
+# 예외 1: 담당자/기업 조합
 exc_companies = {'홈앤서비스','엔씨소프트','엘지전자'}
 exc_mask_person = (df["담당자_name"].astype(str).str.strip().eq("강진우")) & (
     df["기업명"].astype(str).str.strip().isin(exc_companies)
 )
-
-# ★ NEW — R7 예외 2: 과정포맷이 '구독제(온라인)' 또는 '선택구매(온라인)'
+# 예외 2: 과정포맷 온라인 구독/선택구매
 fmt = df["과정포맷"].astype(str).str.strip()
-exc_mask_format = fmt.isin({"구독제(온라인)","선택구매(온라인)"})
+exc_mask_format = fmt.isin(ONLINE_EXEMPT_FORMATS)
 
-# 최종 R7 (두 예외 모두 제외)
-R["R7"] = R7_base & (~exc_mask_person) & (~exc_mask_format)
+# 예외 마스크 컬럼 보관(집계/표시 일관성 보장)
+df["R7_EXEMPT"] = exc_mask_person | exc_mask_format
 
+# 최종 R7
+R["R7"] = R7_base & (~df["R7_EXEMPT"])
 
 R["R8"]  = (TODAY - df["생성_날짜_std"] >= pd.Timedelta(days=7)) & missing_str_or_na(df["카테고리"])
 R["R9"]  = (TODAY - df["생성_날짜_std"] >= pd.Timedelta(days=7)) & missing_str_or_na(df["과정포맷"])
 R["R10"] = (df["성사_norm"] == "높음") & (pd.to_datetime(df["수주 예정일"], errors="coerce").isna())
 R["R11"] = (df["상태_norm"] == "convert")
 
-# ★ R12: 성사=높음/확정 & (금액·예상 체결액 모두 없음) — AND 조건
+# R12: 성사=높음/확정 & (금액·예상 체결액 모두 없음)
 R["R12"] = df["성사_norm"].isin(["높음","확정"]) & df["금액"].isna() & df["예상 체결액"].isna()
 
 # 각 규칙 컬럼 붙이기
 for code, flag in R.items():
     df[code] = flag
 
-# 이슈 요약
-def _join_labels_row(row):
-    codes = [c for c in RULE_CODES if row.get(c, False)]
-    labels = [f"{c}:{RULE_LABELS[c]}" for c in codes]
-    return ", ".join(codes), "; ".join(labels)
-df["이슈수"] = df[RULE_CODES].sum(axis=1)
-df[["이슈코드","이슈설명"]] = df.apply(lambda r: pd.Series(_join_labels_row(r)), axis=1)
+# ────────── (신규) 딜 레벨 예외 정의 — 개인/조직 모두 카운트 제외 ──────────
+EXCLUDE_BY_OWNER = {
+    "김민선": {"신세계백화점_직급별 생성형 AI", "우리은행_WLT II DT 평가과정"},
+}
+
+def apply_deal_exclusions(df_in: pd.DataFrame) -> pd.DataFrame:
+    """특정 담당자/이름 및 접두어 기반 예외를 적용해 카운트/표시에서 제외."""
+    df_out = df_in.copy()
+
+    # 1) 담당자별 특정 이름(정확 일치) 제외
+    if {"담당자_name","이름"}.issubset(df_out.columns):
+        for owner, names in EXCLUDE_BY_OWNER.items():
+            mask = df_out["담당자_name"].astype(str).str.strip().eq(owner) & \
+                   df_out["이름"].astype(str).str.strip().isin(names)
+            if mask.any():
+                df_out = df_out[~mask]
+
+    # 2) (신규) 담당자=김윤지 & 이름 접두어 '현대씨앤알_콘텐츠 임차_' 제외
+    if {"담당자_name","이름"}.issubset(df_out.columns):
+        mask_prefix = df_out["담당자_name"].astype(str).str.strip().eq("김윤지") & \
+                      df_out["이름"].astype(str).str.strip().str.startswith("현대씨앤알_콘텐츠 임차_")
+        if mask_prefix.any():
+            df_out = df_out[~mask_prefix]
+
+    return df_out
 
 # ────────── UI: 타이틀 & 사이드바 필터 ──────────
 st.sidebar.header("필터")
@@ -227,34 +249,33 @@ sel_person = st.sidebar.selectbox("개인(담당자)", ["전체"] + person_pool,
 # 선택 반영
 df_f = df_team if sel_person == "전체" else df_team[df_team["담당자_name"] == sel_person].copy()
 
-# ────────── 개인 체크리스트 전용 예외 제거 ──────────
-# 특정 담당자/딜을 개인 체크리스트에서만 제외 (조직 요약 매트릭스에는 영향 없음)
-EXCLUDE_BY_OWNER = {
-    "김민선": {"신세계백화점_직급별 생성형 AI", "우리은행_WLT II DT 평가과정"},
-}
-if sel_person != "전체":
-    names_to_exclude = EXCLUDE_BY_OWNER.get(sel_person, set())
-    if names_to_exclude:
-        df_f = df_f[~df_f["이름"].astype(str).str.strip().isin(names_to_exclude)].copy()
+# ────────── 개인/조직 공통: 예외를 명시적으로 적용 ──────────
+# 개인 화면에서는 상세/카운트 모두 제외, 조직 요약 매트릭스(전체 보기)도 제외
+df_f = apply_deal_exclusions(df_f)
 
-# 공통 표시용 DF
+# 공통 표시용 DF (항상 이슈코드/설명/이슈수 재계산)
 def to_display(df0: pd.DataFrame) -> pd.DataFrame:
     disp = df0.copy()
+
+    # R7 예외 추가 안전 적용(표시용 보정)
+    if {"R7","R7_EXEMPT"}.issubset(disp.columns):
+        disp["R7"] = disp["R7"] & (~disp["R7_EXEMPT"])
+
     # 날짜 보정(표시용)
     for c in ["수주 예정일","계약 체결일","수강시작일","수강종료일"]:
         if c in disp.columns:
             disp[c] = pd.to_datetime(disp[c], errors="coerce").dt.date
-    # 이슈 계산 보강
-    if "이슈수" not in disp.columns:
-        codes_present = [c for c in RULE_CODES if c in disp.columns]
-        disp["이슈수"] = disp[codes_present].sum(axis=1) if codes_present else 0
-    if ("이슈코드" not in disp.columns) or ("이슈설명" not in disp.columns):
-        def _mk_codes(row):
-            codes = [c for c in RULE_CODES if c in row.index and bool(row[c])]
-            labels = [f"{c}:{RULE_LABELS[c]}" for c in codes]
-            return pd.Series([", ".join(codes), "; ".join(labels)], index=["이슈코드","이슈설명"])
-        extra = disp.apply(_mk_codes, axis=1)
-        disp[["이슈코드","이슈설명"]] = extra
+
+    # 항상 이슈코드/설명/이슈수 재계산(표에 반영되는 규칙만)
+    codes_present = [c for c in RULE_CODES if c in disp.columns]
+    def _mk_codes(row):
+        codes = [c for c in codes_present if bool(row.get(c, False))]
+        labels = [f"{c}:{RULE_LABELS[c]}" for c in codes]
+        return pd.Series([", ".join(codes), "; ".join(labels)], index=["이슈코드","이슈설명"])
+    extra = disp.apply(_mk_codes, axis=1)
+    disp[["이슈코드","이슈설명"]] = extra
+    disp["이슈수"] = disp[codes_present].sum(axis=1) if codes_present else 0
+
     cols = [c for c in DISPLAY_COLS if c in disp.columns] + ["이슈코드","이슈설명","이슈수"]
     disp = disp[cols]
     return disp.sort_values(by=["이슈수","생성 날짜"], ascending=[False, False])
@@ -266,8 +287,13 @@ if sel_person == "전체":
     if df_f.empty:
         st.info("선택된 조건에 해당하는 데이터가 없습니다.")
     else:
+        # 집계 전 R7 예외 안전 적용(이미 반영되어 있지만 보수적으로 한 번 더)
+        base_for_count = df_f.copy()
+        if {"R7","R7_EXEMPT"}.issubset(base_for_count.columns):
+            base_for_count["R7"] = base_for_count["R7"] & (~base_for_count["R7_EXEMPT"])
+
         pivot = (
-            df_f
+            base_for_count
             .groupby("담당자_name")[RULE_CODES]
             .sum()
             .assign(총이슈=lambda x: x.sum(axis=1))
@@ -277,7 +303,13 @@ if sel_person == "전체":
 else:
     # 개인 체크리스트: 위배가 있는 규칙만 노출
     st.subheader(f"담당자: {sel_person} — 개인 체크리스트")
-    counts = {code: int(df_f[df_f[code]].shape[0]) for code in RULE_CODES}
+
+    # 개인 집계용(예외/ R7 EXEMPT 보정 반영)
+    base_for_person = df_f.copy()
+    if {"R7","R7_EXEMPT"}.issubset(base_for_person.columns):
+        base_for_person["R7"] = base_for_person["R7"] & (~base_for_person["R7_EXEMPT"])
+
+    counts = {code: int(base_for_person[base_for_person[code]].shape[0]) for code in RULE_CODES}
     codes_with_issue = [c for c in RULE_CODES if counts[c] > 0]
     codes_with_issue.sort(key=lambda k: counts[k], reverse=True)
 
@@ -292,7 +324,7 @@ else:
 
         # 위배 있는 규칙만 익스팬더 + 표
         for code in codes_with_issue:
-            sub = df_f[df_f[code]].copy()
+            sub = base_for_person[base_for_person[code]].copy()
             if sub.empty:
                 continue
             with st.expander(f"{code} · {RULE_LABELS[code]} — {len(sub)}건", expanded=False):
