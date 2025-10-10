@@ -15,7 +15,7 @@
 #   · (신규 규칙) Tab① 표시용 acc에서 '콜로소 매출 배분' pre-2025 행 제외 후 acc=1건 & won=1건이 남고, 금액/시작/종료가 모두 동일
 #
 # [유지/추가]
-# - EXCLUDE_IDS: 중복 코스ID 중 양쪽 모두 2025-01-01 미만(시작/종료)의 코스ID는 전 탭에서 제외
+# - EXCLUDE_IDS: 중복 코스ID 중 양쪽 모두 2025-08-01 미만(시작/종료)의 코스ID는 전 탭에서 제외
 # - Tab① 표시 전용 추가 제외: won 미일치 & acc 중복행 모두 pre‑2025면 Tab①에서만 숨김
 # - accounting '포맷'='캠프' 제외
 # - accounting 교육과정명에 "(B2B)[오프라인] & 원데이 클래스" 또는 "(B2B)[매출집계] & 원데이 클래스" 동시 포함 시 제외
@@ -122,7 +122,7 @@ acc0 = acc0[acc0["코스ID"].notna()].copy()
 won0 = won0[won0["코스ID"].notna()].copy()
 
 # ────────── 사전 제외 집합(EXCLUDE_IDS) 산출 ──────────
-CUTOFF = pd.Timestamp("2025-01-01")
+CUTOFF = pd.Timestamp("2025-08-01")
 
 def _all_pre2025(df: pd.DataFrame, cid: str, start_col: str, end_col: str) -> bool:
     sub = df[df["코스ID"] == cid]
@@ -273,7 +273,7 @@ acc_dups_tab1 = acc_dups_tab1_all[~acc_dups_tab1_all["코스ID"].isin(tab4_ids_a
 # ────────── 상단 안내(사전 제외 목록만) ──────────
 st.title("어카운팅 정합성 체크")
 if EXCLUDE_IDS:
-    with st.expander(f"사전 제외된 코스ID(중복 & 양쪽 날짜 모두 2025-01-01 미만) — {len(EXCLUDE_IDS)}개", expanded=False):
+    with st.expander(f"사전 제외된 코스ID(중복 & 양쪽 날짜 모두 2025-08-01 미만) — {len(EXCLUDE_IDS)}개", expanded=False):
         st.write(sorted(EXCLUDE_IDS))
 
 # ────────── 탭 구성 ──────────
