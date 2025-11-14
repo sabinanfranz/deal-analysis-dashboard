@@ -3,8 +3,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+import json
 
-from data import load_won_deal  # won deal 로더 (data.py)
+from data import load_won_deal, load_all_deal  # ← all_deal 로더 추가
 
 st.set_page_config(page_title="기업별 온라인/출강 구분 매출 (Won)", layout="wide")
 st.title("기업별 온라인·출강 구분 매출 피벗 (Won 기준)")
@@ -65,7 +66,7 @@ def load_base():
         df = df[df["상태"].astype(str).str.strip().str.lower() == "won"]
 
     # 보조 컬럼 정리
-    for col in ["기업명", "과정포맷(대)"]:
+    for col in ["기업명", "과정포맷(대)", "고객사 유형"]:
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].astype(str).str.strip()
@@ -78,6 +79,7 @@ def load_base():
     # 키/정확 일치용
     df["기업명_key"] = df["기업명"].astype(str)
     df["fmt_exact"] = df["과정포맷(대)"].astype(str).str.strip()
+    df["cust_type"] = df["고객사 유형"].astype(str).str.strip()
 
     # 금액(원)
     df["수주 예정액(종합)"] = df["수주 예정액(종합)"].fillna(0.0).astype(float)
@@ -186,16 +188,26 @@ def build_table(df: pd.DataFrame, year: int):
 
 # ───────────────────── Sidebar Filters ─────────────────────
 st.sidebar.header("필터")
-year = st.sidebar.selectbox("연도 선택", [2023, 2024, 2025], index=2)  # 기본 2025
-company_query = st.sidebar.text_input("기업명 검색 (정확히 입력)")
+# 1) 고객사 유형 (기본: 기업 고객)
+df_base = load_base()
+cust_options = ["기업 고객","공공 고객","기타"]
+selected_cust = st.sidebar.selectbox("고객사 유형", cust_options, index=0)
+
+# 2) 연도
+year = st.sidebar.selectbox("연도", [2023, 2024, 2025], index=2)  # 기본 2025
+
+# 3) 기업명 검색
+company_query = st.sidebar.text_input("기업명 검색(정확히 입력)")
 
 # ───────────────────── Build Pivot ─────────────────────
-df_base = load_base()
+# 고객사 유형 필터 적용
+df_base = df_base[df_base["cust_type"] == selected_cust].copy()
+
 df_year = df_base[df_base["수주예정년도"] == year].copy()
 table, company_total = build_table(df_year, year)
 
 yy_cols = month_cols_for(year)
-st.subheader(f"표 · 기업명 × 체결액 구분 × 월별({yy_cols[0]}~{yy_cols[-1]}) · 단위: 억")
+st.subheader(f"표 · ({selected_cust}) 기업명 × 체결액 구분 × 월별({yy_cols[0]}~{yy_cols[-1]}) · 단위: 억")
 st.dataframe(table, use_container_width=True, hide_index=True)
 
 # ───────────────────── Won Raw Rows (검색/기본) ─────────────────────
@@ -230,3 +242,60 @@ else:
         ascending=[False, True, True, False]
     ).copy()
     show_raw(raw_show)
+
+# ───────────────────── 기업명 검색 시 All Deal 요약 JSON (2024/2025) ─────────────────────
+def safe_date_str(s):
+    dt = pd.to_datetime(s, errors="coerce")
+    return None if pd.isna(dt) else str(dt.date())
+
+def build_company_json_all_deal(company_name: str) -> dict:
+    """
+    all_deal 기준으로 2024, 2025 데이터를 동시에 JSON으로 반환.
+    """
+    df_all = load_all_deal().copy()
+
+    # 필요한 컬럼만 안전 확보(없으면 생성)
+    needed = [
+        "생성 날짜","기업명","이름","담당자_name","상태","성사 가능성","수주 예정일(종합)","수주 예정액(종합)",
+        "딜 전환 유형","카테고리(대)","과정포맷(대)","수강시작일","수강종료일","기업 규모","고객사 담당자명",
+        "소속 상위 조직","팀(명함/메일서명)","직급(명함/메일서명)","고객 담당 교육 영역","Net","생성년도"
+    ]
+    for c in needed:
+        if c not in df_all.columns:
+            df_all[c] = pd.NA
+
+    # 생성년도 보정(없으면 생성 날짜에서 추론)
+    if df_all["생성년도"].isna().all():
+        # 생성 날짜/생성일에서 추론
+        if "생성 날짜" in df_all.columns:
+            df_all["생성년도"] = pd.to_datetime(df_all["생성 날짜"], errors="coerce").dt.year
+        elif "생성일" in df_all.columns:
+            df_all["생성년도"] = pd.to_datetime(df_all["생성일"], errors="coerce").dt.year
+
+    df_all["생성년도"] = pd.to_numeric(df_all["생성년도"], errors="coerce")
+    sub = df_all[(df_all["기업명"].astype(str) == company_name) & (df_all["생성년도"].isin([2024, 2025]))].copy()
+
+    # 날짜형 문자열로 정리
+    for dcol in ["생성 날짜","수주 예정일(종합)","수강시작일","수강종료일"]:
+        sub[dcol] = sub[dcol].apply(safe_date_str)
+
+    # JSON 구성
+    def rows_for(year: int):
+        ss = sub[sub["생성년도"] == year]
+        fields = [
+            "생성 날짜","기업명","이름","담당자_name","상태","성사 가능성","수주 예정일(종합)","수주 예정액(종합)",
+            "딜 전환 유형","카테고리(대)","과정포맷(대)","수강시작일","수강종료일","기업 규모","고객사 담당자명",
+            "소속 상위 조직","팀(명함/메일서명)","직급(명함/메일서명)","고객 담당 교육 영역","Net"
+        ]
+        # 존재 컬럼만
+        fields = [f for f in fields if f in ss.columns]
+        recs = ss[fields].to_dict(orient="records")
+        return recs
+
+    return {"2024": rows_for(2024), "2025": rows_for(2025)}
+
+# 기업명 검색 시 JSON 출력
+if company_query.strip():
+    st.markdown("### All Deal 요약 JSON (2024 & 2025)")
+    data_json = build_company_json_all_deal(company_query.strip())
+    st.code(json.dumps(data_json, ensure_ascii=False, indent=2), language="json")
