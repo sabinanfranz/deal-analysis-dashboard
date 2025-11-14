@@ -129,7 +129,7 @@ def _load_won_2025():
 
 @st.cache_data(show_spinner=False)
 def _load_all_for_chulgang():
-    """하단(생성년도/월 기준)용 데이터(출강 전용 파생에 사용)."""
+    """하단(생성년도/월 기준)용 데이터(포맷별 전용 파생에 사용)."""
     df = load_all_deal().copy()
     df["담당자_name"] = df.get("담당자_name", "").astype(str).map(_norm_name)
     df["기업명"] = df.get("기업명", "").astype(str).str.strip()
@@ -213,7 +213,7 @@ def _build_table_won(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def _build_table_chulgang_creation(df: pd.DataFrame) -> pd.DataFrame:
-    """하단 출강 전용(생성년도/월 기준) 표: 6행 × '01'~'12'"""
+    """하단 포맷 전용(생성년도/월 기준) 표: 6행 × '01'~'12'"""
     idx_rows = ["전체", "확정+높음", "낮음", "LOST", "체결률(%)", "수주예정액(확정+높음, 억)"]
     rows = []
     for r in idx_rows:
@@ -298,25 +298,35 @@ def _show_two_tables_won(df_in: pd.DataFrame, title_prefix: str, members: list[s
         st.markdown("**상세 (신규·Won)**")
         st.dataframe(_make_display_detail(view), use_container_width=True, hide_index=True)
 
-def _show_two_tables_chulgang_creation(df_in: pd.DataFrame, title_prefix: str, members: list[str]):
-    """출강 전용(생성 기준) 리텐션/신규 두 표 + 상세"""
+def _show_two_tables_fmt_creation(df_in: pd.DataFrame, title_prefix: str, members: list[str], fmt_label: str):
+    """
+    특정 과정포맷(대) 전용(생성 기준) 리텐션/신규 두 표 + 상세
+    예: 출강, 구독제(온라인), 선택구매(온라인), 포팅, 스킬 ...
+    """
     df_scope = df_in[df_in["담당자_name"].isin(members)].copy()
-    base = df_scope[df_scope["과정포맷(대)"] == "출강"].copy()
+    base = df_scope[df_scope["과정포맷(대)"] == fmt_label].copy()
+
     st.markdown("---")
-    st.markdown(f"### {title_prefix} · **출강** 전용 (생성년도/월 기준)")
+    st.markdown(f"### {title_prefix} · **{fmt_label}** 전용 (생성년도/월 기준)")
     colL, colR = st.columns(2)
+
     with colL:
-        st.markdown("#### 출강 · 리텐션")
+        st.markdown(f"#### {fmt_label} · 리텐션")
         view = base[base["is_retention"]]
         st.dataframe(_build_table_chulgang_creation(view), use_container_width=True, hide_index=True)
-        st.markdown("**상세 (출강·리텐션·생성 기준)**")
+        st.markdown(f"**상세 ({fmt_label}·리텐션·생성 기준)**")
         st.dataframe(_make_display_detail(view), use_container_width=True, hide_index=True)
+
     with colR:
-        st.markdown("#### 출강 · 신규")
+        st.markdown(f"#### {fmt_label} · 신규")
         view = base[~base["is_retention"]]
         st.dataframe(_build_table_chulgang_creation(view), use_container_width=True, hide_index=True)
-        st.markdown("**상세 (출강·신규·생성 기준)**")
+        st.markdown(f"**상세 ({fmt_label}·신규·생성 기준)**")
         st.dataframe(_make_display_detail(view), use_container_width=True, hide_index=True)
+
+def _show_two_tables_chulgang_creation(df_in: pd.DataFrame, title_prefix: str, members: list[str]):
+    """출강 전용(생성 기준) 리텐션/신규 두 표 + 상세"""
+    _show_two_tables_fmt_creation(df_in, title_prefix, members, "출강")
 
 def _show_two_tables_chulgang_creation_ai(df_in: pd.DataFrame, title_prefix: str, members: list[str]):
     """출강 × 생성형 AI 전용(생성 기준) 리텐션/신규 두 표 + 상세"""
@@ -335,6 +345,7 @@ def _show_two_tables_chulgang_creation_ai(df_in: pd.DataFrame, title_prefix: str
         st.markdown("#### 출강 × 생성형 AI · 신규")
         view = base[~base["is_retention"]]
         st.dataframe(_build_table_chulgang_creation(view), use_container_width=True, hide_index=True)
+        st.markdown("**상세 (출강×생성형 AI·신규·생성 기준)**")
         st.dataframe(_make_display_detail(view), use_container_width=True, hide_index=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,23 +354,27 @@ def render_part(team_name: str, part_name: str):
     _apply_compact_layout()  # 좌우 여백 축소
 
     # 멤버 수집
-    members = [ _norm_name(n) for n in PART_STRUCTURE[team_name][part_name] ]
+    members = [_norm_name(n) for n in PART_STRUCTURE[team_name][part_name]]
 
     # 데이터 적재
-    won           = _load_won_2025()
-    alldeal       = _load_all_for_chulgang()
-    alldeal_low   = _load_all_for_prob("낮음")
-    alldeal_high  = _load_all_for_prob("높음")
+    won          = _load_won_2025()
+    alldeal      = _load_all_for_chulgang()
+    alldeal_low  = _load_all_for_prob("낮음")
+    alldeal_high = _load_all_for_prob("높음")
 
     # ─────────── 상위 탭: ['전체', '낮음높음', <개별 이름들>...] ───────────
     top_tabs = st.tabs(["전체", "낮음높음", *members])
 
-    # (1) 전체 탭: Won / 출강 / 출강×생성형AI
+    # (1) 전체 탭: Won / 출강 / 출강×생성형AI / 기타 포맷 4종
     with top_tabs[0]:
         title_prefix = f"{team_name} {part_name}(전체)"
         _show_two_tables_won(won, title_prefix, members)
         _show_two_tables_chulgang_creation(alldeal, title_prefix, members)
         _show_two_tables_chulgang_creation_ai(alldeal, title_prefix, members)
+
+        # ⚡ 추가: 다른 과정포맷(대) 4종 전용 블록
+        for fmt_label in ["구독제(온라인)", "선택구매(온라인)", "포팅", "스킬"]:
+            _show_two_tables_fmt_creation(alldeal, title_prefix, members, fmt_label)
 
     # (2) 낮음높음 탭: ‘낮음’ 상세 2표 + ‘높음’ 상세 2표
     with top_tabs[1]:
@@ -367,7 +382,7 @@ def render_part(team_name: str, part_name: str):
         _show_prob_details(alldeal_low,  title_prefix, "낮음", members)
         _show_prob_details(alldeal_high, title_prefix, "높음", members)
 
-    # (3) 개별 이름 탭들: 기존 구성 유지(상단 낮음/높음 상세 → Won → 출강)
+    # (3) 개별 이름 탭들: 낮음/높음 상세 → Won → 출강 → 기타 포맷 4종
     for i, person in enumerate(members, start=2):
         with top_tabs[i]:
             title_prefix = f"{person}"
@@ -375,5 +390,7 @@ def render_part(team_name: str, part_name: str):
             _show_prob_details(alldeal_high, title_prefix, "높음", [person])
             _show_two_tables_won(won, title_prefix, [person])
             _show_two_tables_chulgang_creation(alldeal, title_prefix, [person])
-            # 필요 시 개인별 AI 전용도 가능:
-            # _show_two_tables_chulgang_creation_ai(alldeal, title_prefix, [person])
+
+            # ⚡ 개인별 기타 포맷 4종 전용 블록
+            for fmt_label in ["구독제(온라인)", "선택구매(온라인)", "포팅", "스킬"]:
+                _show_two_tables_fmt_creation(alldeal, title_prefix, [person], fmt_label)
