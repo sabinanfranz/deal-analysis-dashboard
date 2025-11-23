@@ -17,7 +17,8 @@ st.set_page_config(page_title="사업부-온라인 – 월별 체결률 (2025·�
 # ────────── 상수 ──────────
 DETAIL_COLS = [
     '생성년도','생성월','기업명','이름','담당자_name','성사 가능성',
-    '수주 예정일(종합)','수주 예정액(종합)','Net','과정포맷(대)','카테고리(대)'
+    '수주 예정일(종합)','수주 예정액(종합)','Net','과정포맷(대)','카테고리(대)',
+    '(온라인)입과 주기','(온라인)최초 입과 여부'
 ]
 MONTHS = list(range(1, 13))
 MONTH_COLS = [f"{m}월" for m in MONTHS]
@@ -31,6 +32,7 @@ AMOUNT_ROW = '수주예정액(확정+높음, 억)'
 
 # ✅ 온라인만 포함하도록 사용
 ONLINE_SET = {'선택구매(온라인)','구독제(온라인)','포팅'}
+FALSE_FIRST_ENROLL = {'false','no','n','0'}
 
 # 상태 표준화
 STAT_MAP = {'확정':'확정','높음':'높음','낮음':'낮음','LOW':'낮음','LOST':'LOST','LOST/중단':'LOST'}
@@ -39,6 +41,9 @@ STAT_MAP = {'확정':'확정','높음':'높음','낮음':'낮음','LOW':'낮음'
 df = load_all_deal()
 ret_df = load_retention()
 ret_set = set(ret_df['기업명'].dropna()) if '기업명' in ret_df.columns else set()
+for col in ['(온라인)입과 주기','(온라인)최초 입과 여부']:
+    if col not in df.columns:
+        df[col] = pd.NA
 
 # 기업 고객만
 df = df[df['고객사 유형'].fillna('').eq('기업 고객')].copy()
@@ -50,6 +55,18 @@ df['팀'] = df['담당자_name'].map(NAME2TEAM)
 # 카테고리 조건 제거 (그대로 보존만)
 df['카테고리_정리'] = df['카테고리(대)'].fillna('').str.strip()
 df['과정포맷_정리'] = df['과정포맷(대)'].fillna('').str.strip()
+if '(온라인)최초 입과 여부' in df.columns:
+    first_raw = df['(온라인)최초 입과 여부']
+    str_mask = (
+        first_raw
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(FALSE_FIRST_ENROLL)
+    )
+    num_mask = pd.to_numeric(first_raw, errors='coerce').eq(0)
+    first_flag = (str_mask | num_mask).fillna(False)
+    df = df[~first_flag].copy()
 
 # ✅ 필터: 2025년, 1~12월, 온라인 포맷만 포함, 리텐션 고객만
 df = df[(df['생성년도'] == 2025) &
