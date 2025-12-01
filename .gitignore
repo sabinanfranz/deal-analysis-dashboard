@@ -38,8 +38,5 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
-
-# Data files (if needed)
-*.csv
-*.xlsx
-*.txt 
+.env
+service_account.json
