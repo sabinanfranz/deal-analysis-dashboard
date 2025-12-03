@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - streamlit 없는 환경 대응
     st = None
 
 from salesmap_sync.fetch_salesmap import DB_PATH, ensure_fresh_db
+from salesmap_sync.artifact_fetch import fetch_artifact_if_missing
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -45,6 +46,8 @@ def _allow_fetch_default() -> bool:
 
 @_cache_resource
 def _get_conn(max_age_hours: int, allow_fetch: bool) -> sqlite3.Connection:
+    # 1) 캐시 파일이 없으면 GitHub Artifact에서 받아보기 (토큰/레포 필요)
+    fetch_artifact_if_missing(db_path=DB_PATH)
     db_path = ensure_fresh_db(max_age_hours=max_age_hours, allow_fetch=allow_fetch)
     return _connect(db_path)
 
