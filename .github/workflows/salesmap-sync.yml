@@ -12,6 +12,7 @@ jobs:
     env:
       SALESMAP_TOKEN: ${{ secrets.SALESMAP_TOKEN }}
       SALESMAP_API_BASE: ${{ secrets.SALESMAP_API_BASE }}
+      SALESMAP_FETCH_ON_DEMAND: "1"
     steps:
       - uses: actions/checkout@v4
 
