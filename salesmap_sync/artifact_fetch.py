@@ -21,8 +21,21 @@ DEFAULT_ARTIFACT_NAME = os.getenv("SALES_DB_ARTIFACT", "salesmap-db")
 DEFAULT_DB_PATH = Path(os.getenv("SALES_DB_PATH", Path(__file__).parent / "salesmap.db"))
 
 
+def _get_secret(name: str) -> Optional[str]:
+    """환경변수 우선, 없으면 streamlit secrets에서 조회."""
+    val = os.getenv(name)
+    if val:
+        return val
+    try:
+        import streamlit as st  # type: ignore
+
+        return st.secrets.get(name)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+
 def _get_auth_header() -> dict:
-    token = os.getenv("GITHUB_TOKEN")
+    token = _get_secret("GITHUB_TOKEN")
     if not token:
         raise RuntimeError("GITHUB_TOKEN이 설정되지 않아 아티팩트를 다운로드할 수 없습니다.")
     return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
@@ -82,7 +95,7 @@ def fetch_artifact_if_missing(
     if db_path.exists():
         return db_path
 
-    repo = repo or os.getenv("GITHUB_REPO")
+    repo = repo or _get_secret("GITHUB_REPO")
     if not repo:
         return None
 
