@@ -43,3 +43,6 @@ service_account.json
 
 # Local/colab artifacts
 fc_b2b_salesmap_api (3).py
+
+# Generated Salesmap DB
+salesmap_sync/*.db
