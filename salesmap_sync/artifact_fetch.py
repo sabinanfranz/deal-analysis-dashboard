@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GitHub Actions에서 업로드한 salesmap.db 아티팩트를 내려받는 헬퍼.
-환경변수:
-  - GITHUB_REPO (owner/repo) : 필수
-  - GITHUB_TOKEN : repo read 권한 PAT 필요
-  - SALES_DB_ARTIFACT : 아티팩트 이름 (기본 'salesmap-db')
-  - SALES_DB_PATH : 저장 경로 (기본 salesmap_sync/salesmap.db)
+수정: Streamlit Cloud 호환성을 위해 DB_PATH를 /tmp로 변경
 """
 from __future__ import annotations
 
@@ -18,7 +14,10 @@ from typing import Optional
 import requests
 
 DEFAULT_ARTIFACT_NAME = os.getenv("SALES_DB_ARTIFACT", "salesmap-db")
-DEFAULT_DB_PATH = Path(os.getenv("SALES_DB_PATH", Path(__file__).parent / "salesmap.db"))
+
+# 변경: Streamlit Cloud의 read-only 파일시스템 문제 해결
+# DEFAULT_DB_PATH = Path(os.getenv("SALES_DB_PATH", Path(__file__).parent / "salesmap.db"))  # 기존
+DEFAULT_DB_PATH = Path(os.getenv("SALES_DB_PATH", "/tmp/salesmap.db"))  # 수정
 
 
 def _get_secret(name: str) -> Optional[str]:

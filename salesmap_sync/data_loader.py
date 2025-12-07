@@ -66,3 +66,23 @@ def load_all(max_age_hours: int = 12, allow_fetch: Optional[bool] = None) -> Tup
             df = pd.DataFrame()
         dfs.append(df)
     return tuple(dfs)
+
+
+@_cache_data
+def load_all_with_leads(max_age_hours: int = 12, allow_fetch: Optional[bool] = None) -> Tuple[pd.DataFrame, ...]:
+    """
+    load_all 확장판: leads 테이블을 포함하여 반환.
+    기존 load_all의 반환 형태에 영향 없이 별도 헬퍼로 제공.
+    """
+    if allow_fetch is None:
+        allow_fetch = _allow_fetch_default()
+    con = _get_conn(max_age_hours, allow_fetch)
+    tables = ["organizations", "people", "deals", "leads", "memos", "webforms", "webform_submissions"]
+    dfs = []
+    for t in tables:
+        try:
+            df = pd.read_sql_query(f"SELECT * FROM {t}", con)
+        except Exception:
+            df = pd.DataFrame()
+        dfs.append(df)
+    return tuple(dfs)

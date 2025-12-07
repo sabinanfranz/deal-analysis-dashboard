@@ -2,13 +2,7 @@
 """
 Salesmap API -> SQLite 적재 유틸
 --------------------------------
-- 대상: organization, people, deal, memo, webform, webform submit, (quote는 필요 시 확장)
-- 레이트리밋: 100req/10s → 최소 0.12s 간격 + 429 시 10초 슬립
-- 토큰: 환경변수 SALESMAP_TOKEN (Streamlit Cloud에서는 .streamlit/secrets.toml에 설정)
-
-사용 예)
-    from salesmap_sync.fetch_salesmap import ensure_fresh_db
-    db_path = ensure_fresh_db(max_age_hours=12)
+수정: Streamlit Cloud 호환성을 위해 DB_PATH를 /tmp로 변경
 """
 
 from __future__ import annotations
@@ -26,7 +20,10 @@ import pandas as pd
 import requests
 
 BASE_URL = os.getenv("SALESMAP_API_BASE", "https://salesmap.kr/api/v2")
-DB_PATH = Path(__file__).parent / "salesmap.db"
+
+# 변경: Streamlit Cloud의 read-only 파일시스템 문제 해결
+# DB_PATH = Path(__file__).parent / "salesmap.db"  # 기존
+DB_PATH = Path("/tmp/salesmap.db")  # 수정
 USER_AGENT = "salesmap-sync/1.0"
 
 
