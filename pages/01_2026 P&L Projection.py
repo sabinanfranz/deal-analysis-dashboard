@@ -789,26 +789,68 @@ def module_breakdown_table(deals: pd.DataFrame) -> pd.DataFrame:
 def carryover_table(all_deals: pd.DataFrame) -> pd.DataFrame:
     if all_deals is None or all_deals.empty:
         return pd.DataFrame(
-            {"구분": ["2026→2027 이월"], "온라인(억)": [0.0], "출강(억)": [0.0], "합계(억)": [0.0]}
+            {
+                "구분": ["2026→2027 이월", "2026→2028 이후"],
+                "온라인(억)": [0.0, 0.0],
+                "출강(억)": [0.0, 0.0],
+                "합계(억)": [0.0, 0.0],
+            }
         )
-    mask = all_deals["수강종료일"] > YEAR_END
-    future = all_deals.loc[mask]
-    if future.empty:
-        return pd.DataFrame(
-            {"구분": ["2026→2027 이월"], "온라인(억)": [0.0], "출강(억)": [0.0], "합계(억)": [0.0]}
-        )
-    grouped = future.groupby("상위채널")["체결액"].sum()
-    online = grouped.get("온라인", 0.0)
-    offline = grouped.get("출강", 0.0)
-    total = online + offline
-    return pd.DataFrame(
-        {
-            "구분": ["2026→2027 이월"],
-            "온라인(억)": [online],
-            "출강(억)": [offline],
-            "합계(억)": [total],
-        }
+    future = all_deals.copy()
+    future["rev_2027"] = future.apply(
+        lambda row: compute_monthly_allocation(
+            row.get("수강시작일"),
+            row.get("수강종료일"),
+            row.get("체결액", 0.0),
+            year=TARGET_YEAR + 1,
+        ).sum(),
+        axis=1,
     )
+    start_2028 = pd.Timestamp(year=TARGET_YEAR + 2, month=1, day=1)
+
+    def revenue_after_date(row: pd.Series, start_date: pd.Timestamp) -> float:
+        start = row.get("수강시작일")
+        end = row.get("수강종료일")
+        amount = row.get("체결액", 0.0)
+        if pd.isna(start) or pd.isna(end) or amount <= 0:
+            return 0.0
+        total_days = (end - start).days + 1
+        if total_days <= 0 or end < start_date:
+            return 0.0
+        overlap_start = max(start, start_date)
+        overlap_end = end
+        overlap_days = (overlap_end - overlap_start).days + 1
+        if overlap_days <= 0:
+            return 0.0
+        daily = amount / total_days
+        return daily * overlap_days
+
+    future["rev_2028_plus"] = future.apply(
+        lambda row: revenue_after_date(row, start_2028),
+        axis=1,
+    )
+
+    grouped_2027 = future.groupby("상위채널")["rev_2027"].sum()
+    grouped_2028 = future.groupby("상위채널")["rev_2028_plus"].sum()
+    online_2027 = grouped_2027.get("온라인", 0.0)
+    offline_2027 = grouped_2027.get("출강", 0.0)
+    online_2028 = grouped_2028.get("온라인", 0.0)
+    offline_2028 = grouped_2028.get("출강", 0.0)
+    rows = [
+        {
+            "구분": "2026→2027 이월",
+            "온라인(억)": online_2027,
+            "출강(억)": offline_2027,
+            "합계(억)": online_2027 + offline_2027,
+        },
+        {
+            "구분": "2026→2028 이후",
+            "온라인(억)": online_2028,
+            "출강(억)": offline_2028,
+            "합계(억)": online_2028 + offline_2028,
+        },
+    ]
+    return pd.DataFrame(rows)
 
 
 def build_deal_table(deals: pd.DataFrame) -> pd.DataFrame:
@@ -870,13 +912,13 @@ def sidebar_controls() -> Tuple[
 
     st.sidebar.subheader("시뮬레이션 레버 (억 단위)")
     inputs = SimulationInputs(
-        online_target=st.sidebar.number_input("년 온라인 매출 목표", min_value=0.0, value=65.0, step=1.0),
-        offline_target=st.sidebar.number_input("년 출강 매출 목표", min_value=0.0, value=150.0, step=1.0),
+        online_target=st.sidebar.number_input("년 온라인 매출 목표", min_value=0.0, value=70.0, step=1.0),
+        offline_target=st.sidebar.number_input("년 출강 매출 목표", min_value=0.0, value=140.0, step=1.0),
         monthly_marketing=st.sidebar.number_input("월 마케팅비", min_value=0.0, value=0.3, step=0.1),
-        monthly_payroll=st.sidebar.number_input("월 인건비", min_value=0.0, value=5.6, step=0.1),
+        monthly_payroll=st.sidebar.number_input("월 인건비", min_value=0.0, value=6.5, step=0.1),
         online_margin=st.sidebar.slider("온라인 공헌이익률", min_value=0.0, max_value=1.0, value=0.85),
         offline_margin=st.sidebar.slider("출강 공헌이익률", min_value=0.0, max_value=1.0, value=0.55),
-        samsung_online=st.sidebar.number_input("삼성 월 온라인 계획", min_value=0.0, value=1.0, step=0.1),
+        samsung_online=st.sidebar.number_input("삼성 월 온라인 계획", min_value=0.0, value=0.0, step=0.1),
         samsung_offline=st.sidebar.number_input("삼성 월 출강 계획", min_value=0.0, value=2.5, step=0.1),
     )
 
