@@ -25,7 +25,7 @@ OFFLINE_FORMATS = {
     "미기재",
 }
 DEFAULT_DOMAIN = ["대기업", "중견기업", "중소기업", "공공기관", "대학교", "기타"]
-ASSUMED_2025_REVENUE = 160.0  # 억 단위
+ASSUMED_2025_REVENUE = 150.0  # 억 단위
 BASE_DEAL_COLUMNS = [
     "기업명",
     "기업 규모",
