@@ -32,6 +32,9 @@ st.set_page_config(page_title="데이터 품질 점검 (2024-10 이후)", layout
 TODAY = pd.Timestamp(datetime.now(ZoneInfo("Asia/Seoul")).date())
 ONLINE_EXEMPT_FORMATS = {"구독제(온라인)", "선택구매(온라인)"}  # R7 예외
 LECTURE_FORMATS = {"출강","복합(출강+온라인)","비대면 실시간"}   # R15 대상 포맷
+# (예외) 특정 담당자 R13/R15에서 'n월' 키워드 포함 딜 제외
+MONTH_KEYWORD_REGEX = r"(?:1[0-2]|[1-9])월"  # 1월~12월
+EXEMPT_OWNERS_R13_R15 = {"김정은", "이은서"}
 
 TEAM_RAW = {
     '기업교육 1팀': ['김별','김솔이','황초롱','김정은','김동찬','정태윤','서정연',
@@ -207,6 +210,11 @@ R["R10"] = (df["성사_norm"] == "높음") & (pd.to_datetime(df["수주 예정�
 R["R11"] = (df["상태_norm"] == "convert")
 R["R12"] = df["성사_norm"].isin(["높음","확정"]) & df["금액"].isna() & df["예상 체결액"].isna()
 
+# (예외 마스크) 김정은/이은서: 딜 이름에 'n월' 포함 시 R13/R15에서 제외
+name_series = df["이름"].astype(str)
+month_kw_in_name = name_series.str.contains(MONTH_KEYWORD_REGEX, regex=True, na=False)
+r13r15_exempt_mask = df["담당자_name"].astype(str).str.strip().isin(EXEMPT_OWNERS_R13_R15) & month_kw_in_name
+
 # R13: Won 전제 + 담당자 정보 4항목 중 하나라도 결측
 m13 = pd.concat([
     missing_str_or_na(df["소속 상위 조직"]).rename("소속 상위 조직"),
@@ -214,7 +222,7 @@ m13 = pd.concat([
     missing_str_or_na(df["직급(명함/메일서명)"]).rename("직급(명함/메일서명)"),
     missing_str_or_na(df["고객 담당 교육 영역"]).rename("고객 담당 교육 영역"),
 ], axis=1)
-R["R13"] = (df["상태_norm"] == "won") & m13.any(axis=1)
+R["R13"] = (df["상태_norm"] == "won") & m13.any(axis=1) & (~r13r15_exempt_mask)
 
 # R14: Won & {구독제(온라인), 선택구매(온라인)} & 온라인입과 필드 결측
 is_online_paid = fmt.isin(ONLINE_EXEMPT_FORMATS)
@@ -226,7 +234,7 @@ R["R14"] = (df["상태_norm"] == "won") & is_online_paid & m14.any(axis=1)
 
 # R15: Won & {출강, 복합(출강+온라인), 비대면 실시간} & (강사 이름1 OR 강사료1 결측)
 m15 = missing_str_or_na(df["강사 이름1"]) | missing_str_or_na(df["강사료1"])
-R["R15"] = (df["상태_norm"] == "won") & fmt.isin(LECTURE_FORMATS) & m15
+R["R15"] = (df["상태_norm"] == "won") & fmt.isin(LECTURE_FORMATS) & m15 & (~r13r15_exempt_mask)
 
 # 규칙 플래그 컬럼 부착
 for code, flag in R.items():
