@@ -17,7 +17,7 @@
   - 2025년 기준 Won/생성 데이터를 리텐션·신규/포맷별로 집계·상세화하는 공통 뷰.
   - 포맷 구간(`FMT_LABELS`), 상태 표준화(`STAT_MAP`), 리텐션 세트 적용 등 데이터 표준화 포함.
 - `context-bridge.md`
-  - `pages/00_2026 P&L Projection.py` 로직 설명(Backlog/삼성 계획/온라인 리텐션/Upsell/신규 모듈, P&L 산식, 리드타임 룩업 규칙 등).
+  - `pages/01_2026 P&L Projection.py` 로직 설명(Backlog/삼성 계획/온라인 리텐션/Upsell/신규 모듈, P&L 산식, 리드타임 룩업 규칙 등).
 
 ## 데이터 플로우
 1) TAB TXT 갱신 → 2) `data.py` import 시 `load_to_db()`가 SQLite를 재생성(WAL, 인덱스) →  

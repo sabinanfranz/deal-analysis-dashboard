@@ -1,7 +1,7 @@
 # Context Bridge
 
 ## Project Overview
-- `pages/00_2026 P&L Projection.py`는 2025년 Won 딜 데이터를 기반으로 2026년 매출/OP를 예측하는 단일 스트림릿 페이지.
+- `pages/01_2026 P&L Projection.py`는 2025년 Won 딜 데이터를 기반으로 2026년 매출/OP를 예측하는 단일 스트림릿 페이지.
 - 데이터는 기본적으로 `load_won_deal()`(억 단위 변환)에서 불러오며, 업로드 파일로 대체할 수도 있음.
 - 모듈 구성: A) Backlog, B) 삼성 월 계획, C1) 온라인 리텐션(+365), C2) 출강 Upsell(P-tier 배수), D) 목표 대비 신규 딜.
 - 모든 매출은 일별 안분 후 월별·연간 집계하며, 고정비(제작·마케팅·인건비·임대·기타)까지 반영한 OP/Rule-of-50 산출.
