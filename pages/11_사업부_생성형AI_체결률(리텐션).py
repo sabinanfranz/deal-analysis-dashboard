@@ -19,10 +19,11 @@ DETAIL_COLS = [
     '생성년도','생성월','기업명','이름','담당자_name','성사 가능성',
     '수주 예정일(종합)','수주 예정액(종합)','Net','과정포맷(대)','카테고리(대)'
 ]
-MONTHS = list(range(1, 13))
-MONTH_COLS = [f"{m}월" for m in MONTHS]
-ROLL_WINDOWS = [(i, i+1, i+2) for i in range(1, 11)]
-ROLL_COLS = [f"{a}~{c}월" for a, _, c in ROLL_WINDOWS]
+YEARS = [2025, 2026]
+MONTH_KEYS = [(y, m) for y in YEARS for m in range(1, 13)]
+MONTH_COLS = [f"{str(y)[-2:]}년 {m}월" for y, m in MONTH_KEYS]
+ROLL_WINDOWS = [(y, i, i+1, i+2) for y in YEARS for i in range(1, 11)]
+ROLL_COLS = [f"{str(y)[-2:]}년 {a}~{c}월" for y, a, _, c in ROLL_WINDOWS]
 
 # 표 행 구성
 COUNT_ROWS = ['전체','확정+높음','낮음','LOST']
@@ -46,7 +47,8 @@ df['팀'] = df['담당자_name'].map(NAME2TEAM)
 df['카테고리_정리'] = df['카테고리(대)'].fillna('').str.strip()
 df['과정포맷_정리'] = df['과정포맷(대)'].fillna('').str.strip()
 
-df = df[(df['생성년도'] == 2025) &
+df['생성년도'] = pd.to_numeric(df['생성년도'], errors='coerce').astype('Int64')
+df = df[df['생성년도'].isin(YEARS) &
         (df['생성월'].between(1, 12)) &
         (df['카테고리_정리'] == '생성형 AI') &
         (~df['과정포맷_정리'].isin(ONLINE_SET)) &
@@ -67,13 +69,14 @@ def _bucket(sub: pd.DataFrame) -> pd.DataFrame:
             tbl.loc[AMOUNT_ROW, col] = '0.0억'
         return tbl
 
-    sub = sub.dropna(subset=['생성월']).copy()
+    sub = sub.dropna(subset=['생성월','생성년도']).copy()
     sub['생성월'] = pd.to_numeric(sub['생성월'], errors='coerce').astype(int)
+    sub['생성년도'] = pd.to_numeric(sub['생성년도'], errors='coerce').astype(int)
     sub['수주 예정액(종합)'] = pd.to_numeric(sub['수주 예정액(종합)'], errors='coerce').fillna(0.0)
 
-    for m in MONTHS:
-        col = f"{m}월"
-        seg = sub[sub['생성월'] == m]
+    for year, month in MONTH_KEYS:
+        col = f"{str(year)[-2:]}년 {month}월"
+        seg = sub[(sub['생성년도'] == year) & (sub['생성월'] == month)]
         tot = int(len(seg))
         tbl.loc['전체', col] = tot
         if tot:
@@ -114,16 +117,17 @@ def roll_tbl(mask):
             res.loc[AMOUNT_ROW, col] = '0.0억'
         return res
 
-    md = {m: base[f"{m}월"] for m in MONTHS}
-    sub = df[mask].dropna(subset=['생성월']).copy()
+    md = {(y, m): base[f"{str(y)[-2:]}년 {m}월"] for y, m in MONTH_KEYS}
+    sub = df[mask].dropna(subset=['생성월','생성년도']).copy()
     sub['생성월'] = pd.to_numeric(sub['생성월'], errors='coerce').astype(int)
+    sub['생성년도'] = pd.to_numeric(sub['생성년도'], errors='coerce').astype(int)
     sub['수주 예정액(종합)'] = pd.to_numeric(sub['수주 예정액(종합)'], errors='coerce').fillna(0.0)
 
-    for (a, b, c), col in zip(ROLL_WINDOWS, ROLL_COLS):
-        tot  = int(md[a]['전체'])      + int(md[b]['전체'])      + int(md[c]['전체'])
-        win  = int(md[a]['확정+높음']) + int(md[b]['확정+높음']) + int(md[c]['확정+높음'])
-        low  = int(md[a]['낮음'])      + int(md[b]['낮음'])      + int(md[c]['낮음'])
-        lost = int(md[a]['LOST'])      + int(md[b]['LOST'])      + int(md[c]['LOST'])
+    for (year, a, b, c), col in zip(ROLL_WINDOWS, ROLL_COLS):
+        tot  = int(md[(year, a)]['전체'])      + int(md[(year, b)]['전체'])      + int(md[(year, c)]['전체'])
+        win  = int(md[(year, a)]['확정+높음']) + int(md[(year, b)]['확정+높음']) + int(md[(year, c)]['확정+높음'])
+        low  = int(md[(year, a)]['낮음'])      + int(md[(year, b)]['낮음'])      + int(md[(year, c)]['낮음'])
+        lost = int(md[(year, a)]['LOST'])      + int(md[(year, b)]['LOST'])      + int(md[(year, c)]['LOST'])
 
         res.loc['전체', col]      = tot
         res.loc['확정+높음', col] = win
@@ -132,7 +136,7 @@ def roll_tbl(mask):
         res.loc[RATE_ROW, col]    = f"{win / tot * 100:.1f}%" if tot else '0.0%'
 
         # 3개월 합계 기준 수주예정액(확정+높음)
-        seg = sub[sub['생성월'].isin([a, b, c])]
+        seg = sub[(sub['생성년도'] == year) & (sub['생성월'].isin([a, b, c]))]
         amt_uk = (seg.loc[seg['status'].isin(['확정','높음']), '수주 예정액(종합)'].sum() / 1e8)
         res.loc[AMOUNT_ROW, col] = f"{amt_uk:.1f}억"
 
